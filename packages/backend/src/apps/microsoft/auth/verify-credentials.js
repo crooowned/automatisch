@@ -5,6 +5,10 @@ const verifyCredentials = async ($) => {
     (field) => field.key === 'oAuthRedirectUrl'
   );
 
+  if(!$.auth.data.code) {
+    throw new Error('No code found');
+  }
+
   // Were getting first refreshtoken here
   const params = new URLSearchParams({
     client_id: $.auth.data.clientId,

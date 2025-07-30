@@ -30,7 +30,7 @@ export default defineApp({
         'offline_access',
         'openid',
         'profile',
-        'User.Mail.ReadWrite.All',
+        'User-Mail.ReadWrite.All',
         'User.Read',
         'User.Read.All'
     ],

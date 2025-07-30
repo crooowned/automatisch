@@ -2,9 +2,8 @@ version: '3.9'
 services:
   main:
     build:
-      context: ./docker
-      dockerfile: Dockerfile.compose
-    entrypoint: /compose-entrypoint.sh
+      dockerfile: docker/Dockerfile
+    entrypoint: /entrypoint.sh
     ports:
       - '3000:3000'
     depends_on:
@@ -22,16 +21,15 @@ services:
       - POSTGRES_DATABASE=automatisch
       - POSTGRES_USERNAME=automatisch_user
       - POSTGRES_PASSWORD=automatisch_password
-      - ENCRYPTION_KEY
-      - WEBHOOK_SECRET_KEY
-      - APP_SECRET_KEY
+      - ENCRYPTION_KEY=apoiwjdoiauhgp98awda
+      - WEBHOOK_SECRET_KEY=webhook_secret_key
+      - APP_SECRET_KEY=app_secret_key
     volumes:
       - automatisch_storage:/automatisch/storage
   worker:
     build:
-      context: ./docker
-      dockerfile: Dockerfile.compose
-    entrypoint: /compose-entrypoint.sh
+      dockerfile: docker/Dockerfile
+    entrypoint: /entrypoint.sh
     depends_on:
       - main
     environment:

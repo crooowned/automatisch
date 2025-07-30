@@ -18,6 +18,7 @@ import {
 // Do not remove `next` argument as the function signature will not fit for an error handler middleware
 // eslint-disable-next-line no-unused-vars
 const errorHandler = (error, request, response, next) => {
+  console.error(error);
   if (error.message === 'Not Found' || error instanceof NotFoundError) {
     logger.http(request.method + ' ' + request.url + ' ' + 404);
     response.status(404).end();

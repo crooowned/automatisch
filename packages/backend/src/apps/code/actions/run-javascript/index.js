@@ -63,7 +63,8 @@ export default defineAction({
 
     try {
       const context = await isolate.createContext();
-      await context.global.set(
+      const jail = context.global;
+      await jail.set(
         'inputs',
         new ivm.ExternalCopy(objectifiedInput).copyInto()
       );

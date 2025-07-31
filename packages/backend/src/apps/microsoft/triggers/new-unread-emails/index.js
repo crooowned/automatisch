@@ -59,11 +59,10 @@ export default defineTrigger({
         });
         const processedIds = processedMailsStore?.value || [];
 
-        const params = new URLSearchParams({
-            '$filter': 'isRead eq false',
-            '$orderby': 'receivedDateTime desc',
-            '$top': '50',
-        });
+        // Berechne das Datum vor 3 Tagen im ISO 8601 Format
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+        const threeDaysAgoISO = threeDaysAgo.toISOString();
 
         // Basis-URL für die API-Anfrage erstellen
         let baseUrl = 'https://graph.microsoft.com/v1.0';
@@ -79,48 +78,83 @@ export default defineTrigger({
         }
         baseUrl += '/messages';
 
-        const response = await $.http.get(`${baseUrl}?${params.toString()}`, {
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            additionalProperties: {
-                skipAddingBaseUrl: true,
-            },
-        });
+        const newEmails = [];
+        let nextLink = null;
+        const maxEmailsPerRequest = 20; // Reduziert von 50 auf 20
+        const maxTotalEmails = 50; // Maximale Anzahl von E-Mails insgesamt
 
-        if (response.data.value?.length) {
-            const newEmails = [];
-            for (const mail of response.data.value) {
-                // Überprüfe, ob mail und mail.id definiert sind
-                if (mail && mail.id && !processedIds.includes(mail.id)) {
-                    newEmails.push(mail);
-                    // Mail als gelesen markieren
-                    await $.http.patch(`${baseUrl}/${mail.id}`, {
-                        isRead: true
-                    }, {
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        additionalProperties: {
-                            skipAddingBaseUrl: true,
-                        },
-                    });
-                    $.pushTriggerItem({
-                        raw: mail,
-                        meta: {
-                            internalId: mail.id,
-                        },
-                    });
+        do {
+            // URL für aktuelle Anfrage erstellen
+            let currentUrl;
+            if (nextLink) {
+                currentUrl = nextLink;
+            } else {
+                const params = new URLSearchParams({
+                    '$filter': `isRead eq false and receivedDateTime ge ${threeDaysAgoISO}`,
+                    '$orderby': 'receivedDateTime desc',
+                    '$top': maxEmailsPerRequest.toString(),
+                });
+                currentUrl = `${baseUrl}?${params.toString()}`;
+            }
+
+            const response = await $.http.get(currentUrl, {
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                additionalProperties: {
+                    skipAddingBaseUrl: true,
+                },
+            });
+
+            if (response.data.value?.length) {
+                for (const mail of response.data.value) {
+                    // Überprüfe, ob mail und mail.id definiert sind
+                    if (mail && mail.id && !processedIds.includes(mail.id)) {
+                        newEmails.push(mail);
+                        
+                        // Mail als gelesen markieren
+                        await $.http.patch(`${baseUrl}/${mail.id}`, {
+                            isRead: true
+                        }, {
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            additionalProperties: {
+                                skipAddingBaseUrl: true,
+                            },
+                        });
+                        
+                        $.pushTriggerItem({
+                            raw: mail,
+                            meta: {
+                                internalId: mail.id,
+                            },
+                        });
+
+                        // Stoppe, wenn wir das Maximum erreicht haben
+                        if (newEmails.length >= maxTotalEmails) {
+                            break;
+                        }
+                    }
                 }
             }
 
-            if (newEmails.length > 0) {
-                // Aktualisiere die Liste der verarbeiteten Mails
-                await $.datastore.set({
-                    key: 'processedMails',
-                    value: [...processedIds, ...newEmails.map(mail => mail.id)]
-                });
+            // Prüfe auf weitere Seiten (Pagination)
+            nextLink = response.data['@odata.nextLink'] || null;
+            
+            // Stoppe die Schleife, wenn wir das Maximum erreicht haben
+            if (newEmails.length >= maxTotalEmails) {
+                break;
             }
+            
+        } while (nextLink);
+
+        if (newEmails.length > 0) {
+            // Aktualisiere die Liste der verarbeiteten Mails
+            await $.datastore.set({
+                key: 'processedMails',
+                value: [...processedIds, ...newEmails.map(mail => mail.id)]
+            });
         }
     },
 

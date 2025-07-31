@@ -4,6 +4,8 @@ services:
     build:
       dockerfile: docker/Dockerfile
     entrypoint: /entrypoint.sh
+    restart: unless-stopped
+    env_file: .env
     ports:
       - '3000:3000'
     depends_on:
@@ -30,6 +32,8 @@ services:
     build:
       dockerfile: docker/Dockerfile
     entrypoint: /entrypoint.sh
+    restart: unless-stopped
+    env_file: .env
     depends_on:
       - main
     environment:
@@ -47,6 +51,8 @@ services:
       - automatisch_storage:/automatisch/storage
   postgres:
     image: 'postgres:14.5'
+    restart: unless-stopped
+    env_file: .env
     environment:
       - POSTGRES_DB=automatisch
       - POSTGRES_USER=automatisch_user
@@ -60,6 +66,8 @@ services:
       retries: 5
   redis:
     image: 'redis:7.0.4'
+    restart: unless-stopped
+    env_file: .env
     volumes:
       - redis_data:/data
 volumes:

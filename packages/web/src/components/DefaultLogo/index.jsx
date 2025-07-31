@@ -12,8 +12,9 @@ const DefaultLogo = () => {
   if (isMation) return <MationLogo />;
 
   return (
-    <Typography variant="h6" component="h1" data-test="typography-logo" noWrap>
+    <Typography variant="h6" component="h1" data-test="typography-logo">
       <FormattedMessage id="brandText" />
+      <small><a href="https://github.com/crooowned/automatisch" target="_blank" rel="noopener noreferrer">GitHub</a></small>
     </Typography>
   );
 };

@@ -4,26 +4,16 @@ import Crypto from 'node:crypto';
 export default defineTrigger({
     name: 'Neue ungelesene E-Mails',
     key: 'newUnreadEmails',
-    pollInterval: 15,
+    pollInterval: 5,
     description: 'Wird ausgelöst, wenn neue ungelesene E-Mails empfangen werden.',
     arguments: [
         {
             label: 'Shared Mailbox',
-            key: 'mailboxId',
-            type: 'dropdown',
+            key: 'sharedMailbox',
+            type: 'string',
             required: false,
-            description: 'Wählen Sie optional eine Shared Mailbox aus. Wenn keine ausgewählt wird, wird Ihre persönliche Mailbox verwendet.',
-            variables: true,
-            source: {
-                type: 'query',
-                name: 'getDynamicData',
-                arguments: [
-                    {
-                        name: 'key',
-                        value: 'listMailboxes'
-                    }
-                ]
-            }
+            description: 'Tippen Sie ihre Shared Mailbox ein. Wenn keine angegeben wird, wird Ihre persönliche Mailbox verwendet.',
+            variables: true
         },
         {
             label: 'Ordner',
@@ -32,7 +22,7 @@ export default defineTrigger({
             required: false,
             description: 'Wählen Sie optional einen Ordner aus. Wenn keiner ausgewählt wird, wird der Posteingang verwendet.',
             variables: true,
-            dependsOn: ['parameters.mailboxId'],
+            dependsOn: ['parameters.sharedMailbox'],
             source: {
                 type: 'query',
                 name: 'getDynamicData',
@@ -42,16 +32,81 @@ export default defineTrigger({
                         value: 'listFolders'
                     },
                     {
-                        name: 'parameters.mailboxId',
-                        value: '{parameters.mailboxId}'
+                        name: 'parameters.sharedMailbox',
+                        value: '{parameters.sharedMailbox}'
                     }
                 ]
             }
+        },
+        {
+            label: 'Betreff enthält',
+            key: 'subjectContains',
+            type: 'string',
+            required: false,
+            description: 'Filtert E-Mails, deren Betreff den angegebenen Text enthält. Wenn leer gelassen, werden alle E-Mails verarbeitet.',
+            variables: true
+        },
+        {
+            label: 'Alter in Tagen',
+            key: 'ageInDays',
+            type: 'dropdown',
+            required: false,
+            description: 'Anzahl der Tage zurück, für die E-Mails abgerufen werden sollen. Wenn nicht angegeben, wird nicht nach Alter gefiltert.',
+            variables: true,
+            options: [
+                { label: '1 Tag', value: 1 },
+                { label: '2 Tage', value: 2 },
+                { label: '3 Tage', value: 3 },
+                { label: '4 Tage', value: 4 },
+                { label: '5 Tage', value: 5 },
+                { label: '6 Tage', value: 6 },
+                { label: '7 Tage', value: 7 }
+            ]
+        },
+        {
+            label: 'Ausführungsintervall (Minuten)',
+            key: 'executionInterval',
+            type: 'dropdown',
+            required: false,
+            description: 'Wie oft soll nach neuen E-Mails gesucht werden? Standard: 5 Minuten.',
+            variables: true,
+            options: [
+                { label: 'Jede Minute', value: 1 },
+                { label: 'Alle 2 Minuten', value: 2 },
+                { label: 'Alle 5 Minuten', value: 5 },
+                { label: 'Alle 10 Minuten', value: 10 },
+                { label: 'Alle 15 Minuten', value: 15 },
+                { label: 'Alle 30 Minuten', value: 30 },
+                { label: 'Alle 60 Minuten', value: 60 }
+            ]
         }
     ],
 
     async run($) {
-        const { mailboxId, folderId } = $.step.parameters;
+        const { sharedMailbox, folderId, subjectContains, ageInDays, executionInterval = 5 } = $.step.parameters;
+
+        // Self-throttling: Check if enough time has passed since last execution
+        const lastExecutionStore = await $.datastore.get({
+            key: 'lastExecutionTime'
+        });
+        
+        const now = new Date();
+        const lastExecution = lastExecutionStore?.value ? new Date(lastExecutionStore.value) : null;
+        
+        // Calculate if enough time has passed
+        if (lastExecution) {
+            const minutesSinceLastExecution = (now - lastExecution) / (1000 * 60);
+            if (minutesSinceLastExecution < executionInterval) {
+                // Not enough time has passed, skip this execution
+                return;
+            }
+        }
+        
+        // Update last execution time
+        await $.datastore.set({
+            key: 'lastExecutionTime',
+            value: now.toISOString()
+        });
 
         // Hole die verarbeiteten Mail-IDs aus dem Datastore
         const processedMailsStore = await $.datastore.get({
@@ -59,15 +114,18 @@ export default defineTrigger({
         });
         const processedIds = processedMailsStore?.value || [];
 
-        // Berechne das Datum vor 3 Tagen im ISO 8601 Format
-        const threeDaysAgo = new Date();
-        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-        const threeDaysAgoISO = threeDaysAgo.toISOString();
+        // Berechne das Datum für den Altersfilter, falls angegeben
+        let ageFilterISO = null;
+        if (ageInDays && ageInDays > 0) {
+            const ageDate = new Date();
+            ageDate.setDate(ageDate.getDate() - ageInDays);
+            ageFilterISO = ageDate.toISOString();
+        }
 
         // Basis-URL für die API-Anfrage erstellen
         let baseUrl = 'https://graph.microsoft.com/v1.0';
-        if (mailboxId) {
-            baseUrl += `/users/${mailboxId}`;
+        if (sharedMailbox) {
+            baseUrl += `/users/${sharedMailbox}`;
         } else {
             baseUrl += '/me';
         }
@@ -89,8 +147,23 @@ export default defineTrigger({
             if (nextLink) {
                 currentUrl = nextLink;
             } else {
+                // Basis-Filter für ungelesene E-Mails
+                let filter = 'isRead eq false';
+                
+                // Füge Altersfilter hinzu, falls angegeben
+                if (ageFilterISO) {
+                    filter += ` and receivedDateTime ge ${ageFilterISO}`;
+                }
+                
+                // Füge Betreff-Filter hinzu, wenn angegeben
+                if (subjectContains && subjectContains.trim() !== '') {
+                    // Escape Anführungszeichen im Suchtext
+                    const escapedSubject = subjectContains.replace(/'/g, "''");
+                    filter += ` and contains(subject, '${escapedSubject}')`;
+                }
+                
                 const params = new URLSearchParams({
-                    '$filter': `isRead eq false and receivedDateTime ge ${threeDaysAgoISO}`,
+                    '$filter': filter,
                     '$orderby': 'receivedDateTime desc',
                     '$top': maxEmailsPerRequest.toString(),
                 });
@@ -123,6 +196,36 @@ export default defineTrigger({
                                 skipAddingBaseUrl: true,
                             },
                         });
+                        
+                        // Fetch attachments if the email has any
+                        if (mail.hasAttachments) {
+                            try {
+                                let attachmentsUrl = 'https://graph.microsoft.com/v1.0';
+                                if (sharedMailbox) {
+                                    attachmentsUrl += `/users/${sharedMailbox}`;
+                                } else {
+                                    attachmentsUrl += '/me';
+                                }
+                                attachmentsUrl += `/messages/${mail.id}/attachments`;
+                                
+                                const attachmentsResponse = await $.http.get(attachmentsUrl, {
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    additionalProperties: {
+                                        skipAddingBaseUrl: true,
+                                    },
+                                });
+                                
+                                if (attachmentsResponse.data.value?.length) {
+                                    mail.attachments = attachmentsResponse.data.value;
+                                }
+                            } catch (error) {
+                                // Log error but don't fail the entire process
+                                console.error(`Failed to fetch attachments for email ${mail.id}:`, error);
+                                mail.attachments = [];
+                            }
+                        }
                         
                         $.pushTriggerItem({
                             raw: mail,
@@ -159,6 +262,7 @@ export default defineTrigger({
     },
 
     async testRun($) {
+        const { subjectContains } = $.step.parameters;
         const lastExecutionStep = await $.getLastExecutionStep();
 
         if (lastExecutionStep?.dataOut) {
@@ -171,9 +275,15 @@ export default defineTrigger({
             return;
         }
 
+        // Erstelle einen Betreff basierend auf dem Filter
+        let testSubject = 'Test E-Mail';
+        if (subjectContains && subjectContains.trim() !== '') {
+            testSubject = `Test E-Mail - ${subjectContains}`;
+        }
+
         const sampleEmail = {
             id: Crypto.randomUUID(),
-            subject: 'Test E-Mail',
+            subject: testSubject,
             receivedDateTime: new Date().toISOString(),
             from: {
                 emailAddress: {
@@ -183,10 +293,29 @@ export default defineTrigger({
             },
             bodyPreview: 'Dies ist eine Test-E-Mail für den Microsoft Graph E-Mail-Trigger.',
             isRead: false,
+            hasAttachments: true,
             body: {
                 content: 'Dies ist der vollständige Inhalt der Test-E-Mail.',
                 contentType: 'text'
-            }
+            },
+            attachments: [
+                {
+                    id: 'attachment-1',
+                    name: 'test-document.pdf',
+                    contentType: 'application/pdf',
+                    size: 1024,
+                    isInline: false,
+                    lastModifiedDateTime: new Date().toISOString()
+                },
+                {
+                    id: 'attachment-2',
+                    name: 'image.jpg',
+                    contentType: 'image/jpeg',
+                    size: 2048,
+                    isInline: true,
+                    lastModifiedDateTime: new Date().toISOString()
+                }
+            ]
         };
 
         $.pushTriggerItem({

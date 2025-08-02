@@ -9,11 +9,11 @@ export default {
         };
 
         try {
-            const { mailboxId } = $.step.parameters;
+            const { sharedMailbox } = $.step.parameters;
 
             let nextLink = 'https://graph.microsoft.com/v1.0';
-            if (mailboxId) {
-                nextLink += `/users/${mailboxId}`;
+            if (sharedMailbox) {
+                nextLink += `/users/${sharedMailbox}`;
             } else {
                 nextLink += '/me';
             }

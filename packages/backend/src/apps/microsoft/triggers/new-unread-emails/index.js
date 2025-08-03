@@ -2,10 +2,10 @@ import defineTrigger from '../../../../helpers/define-trigger.js';
 import Crypto from 'node:crypto';
 
 export default defineTrigger({
-    name: 'Neue ungelesene E-Mails',
-    key: 'newUnreadEmails',
+    name: 'Neue E-Mails',
+    key: 'newEmails',
     pollInterval: 5,
-    description: 'Wird ausgelöst, wenn neue ungelesene E-Mails empfangen werden.',
+    description: 'Wird ausgelöst, wenn neue E-Mails empfangen werden.',
     arguments: [
         {
             label: 'Shared Mailbox',
@@ -45,17 +45,42 @@ export default defineTrigger({
             required: false,
             description: 'Filtert E-Mails, deren Betreff den angegebenen Text enthält. Wenn leer gelassen, werden alle E-Mails verarbeitet.',
             variables: true
+        },
+        {
+            label: 'Alter in Tagen',
+            key: 'ageInDays',
+            type: 'dropdown',
+            required: false,
+            description: 'Anzahl der Tage zurück, für die E-Mails abgerufen werden sollen. Wenn nicht angegeben, wird nicht nach Alter gefiltert.',
+            variables: true,
+            options: [
+                { label: '1 Tag', value: 1 },
+                { label: '2 Tage', value: 2 },
+                { label: '3 Tage', value: 3 },
+                { label: '4 Tage', value: 4 },
+                { label: '5 Tage', value: 5 },
+                { label: '6 Tage', value: 6 },
+                { label: '7 Tage', value: 7 }
+            ]
         }
     ],
 
     async run($) {
-        const { sharedMailbox, folderId, subjectContains } = $.step.parameters;
+        const { sharedMailbox, folderId, subjectContains, ageInDays } = $.step.parameters;
 
         // Hole die verarbeiteten Mail-IDs aus dem Datastore
         const processedMailsStore = await $.datastore.get({
             key: 'processedMails'
         });
         const processedIds = processedMailsStore?.value || [];
+
+        // Berechne das Datum für den Altersfilter, falls angegeben
+        let ageFilterISO = null;
+        if (ageInDays && ageInDays > 0) {
+            const ageDate = new Date();
+            ageDate.setDate(ageDate.getDate() - ageInDays);
+            ageFilterISO = ageDate.toISOString();
+        }
 
         // Basis-URL für die API-Anfrage erstellen
         let baseUrl = 'https://graph.microsoft.com/v1.0';
@@ -82,16 +107,31 @@ export default defineTrigger({
             if (nextLink) {
                 currentUrl = nextLink;
             } else {
-                // Basis-Filter für ungelesene E-Mails
-                const filter = 'isRead eq false';
+                // Erstelle Filter-Array für die verschiedenen Bedingungen
+                let filterParts = [];
                 
-                // Betreff-Filter wird clientseitig angewendet, um API-Komplexität zu vermeiden
+                // Füge Altersfilter hinzu, falls angegeben
+                if (ageFilterISO) {
+                    filterParts.push(`receivedDateTime ge ${ageFilterISO}`);
+                }
+                
+                // Füge Betreff-Filter hinzu, wenn angegeben
+                if (subjectContains && subjectContains.trim() !== '') {
+                    // Escape Anführungszeichen im Suchtext
+                    const escapedSubject = subjectContains.replace(/'/g, "''");
+                    filterParts.push(`contains(subject, '${escapedSubject}')`);
+                }
                 
                 const params = new URLSearchParams({
-                    '$filter': filter,
                     '$orderby': 'receivedDateTime desc',
                     '$top': maxEmailsPerRequest.toString(),
                 });
+                
+                // Nur Filter hinzufügen wenn welche vorhanden sind
+                if (filterParts.length > 0) {
+                    params.set('$filter', filterParts.join(' and '));
+                }
+                
                 currentUrl = `${baseUrl}?${params.toString()}`;
             }
 
@@ -103,35 +143,12 @@ export default defineTrigger({
                     skipAddingBaseUrl: true,
                 },
             });
-            console.log('currentUrl', currentUrl);
-            console.log('response', response);
 
             if (response.data.value?.length) {
                 for (const mail of response.data.value) {
                     // Überprüfe, ob mail und mail.id definiert sind
                     if (mail && mail.id && !processedIds.includes(mail.id)) {
-                        // Clientseitige Filterung nach Betreff
-                        if (subjectContains && subjectContains.trim() !== '') {
-                            const subject = mail.subject || '';
-                            if (!subject.toLowerCase().includes(subjectContains.toLowerCase())) {
-                                console.log('Betreff nicht übereinstimmt', subject, subjectContains);
-                                continue; // E-Mail überspringen, wenn Betreff nicht übereinstimmt
-                            }
-                        }
-                        
                         newEmails.push(mail);
-                        
-                        // Mail als gelesen markieren
-                        await $.http.patch(`${baseUrl}/${mail.id}`, {
-                            isRead: true
-                        }, {
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            additionalProperties: {
-                                skipAddingBaseUrl: true,
-                            },
-                        });
                         
                         // Fetch attachments if the email has any
                         if (mail.hasAttachments) {
@@ -174,8 +191,6 @@ export default defineTrigger({
                         if (newEmails.length >= maxTotalEmails) {
                             break;
                         }
-                    } else {
-                        console.log('Mail nicht verarbeitet', mail.id, processedIds.includes(mail.id));
                     }
                 }
             }
@@ -200,7 +215,7 @@ export default defineTrigger({
     },
 
     async testRun($) {
-        const { subjectContains } = $.step.parameters;
+        const { subjectContains, ageInDays } = $.step.parameters;
         const lastExecutionStep = await $.getLastExecutionStep();
 
         if (lastExecutionStep?.dataOut) {

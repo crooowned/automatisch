@@ -103,6 +103,8 @@ export default defineTrigger({
                     skipAddingBaseUrl: true,
                 },
             });
+            console.log('currentUrl', currentUrl);
+            console.log('response', response);
 
             if (response.data.value?.length) {
                 for (const mail of response.data.value) {

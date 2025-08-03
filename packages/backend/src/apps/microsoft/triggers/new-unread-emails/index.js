@@ -45,51 +45,11 @@ export default defineTrigger({
             required: false,
             description: 'Filtert E-Mails, deren Betreff den angegebenen Text enthält. Wenn leer gelassen, werden alle E-Mails verarbeitet.',
             variables: true
-        },
-        {
-            label: 'Ausführungsintervall (Minuten)',
-            key: 'executionInterval',
-            type: 'dropdown',
-            required: false,
-            description: 'Wie oft soll nach neuen E-Mails gesucht werden? Standard: 5 Minuten.',
-            variables: true,
-            options: [
-                { label: 'Jede Minute', value: 1 },
-                { label: 'Alle 2 Minuten', value: 2 },
-                { label: 'Alle 5 Minuten', value: 5 },
-                { label: 'Alle 10 Minuten', value: 10 },
-                { label: 'Alle 15 Minuten', value: 15 },
-                { label: 'Alle 30 Minuten', value: 30 },
-                { label: 'Alle 60 Minuten', value: 60 }
-            ]
         }
     ],
 
     async run($) {
-        const { sharedMailbox, folderId, subjectContains, executionInterval = 5 } = $.step.parameters;
-
-        // Self-throttling: Check if enough time has passed since last execution
-        const lastExecutionStore = await $.datastore.get({
-            key: 'lastExecutionTime'
-        });
-        
-        const now = new Date();
-        const lastExecution = lastExecutionStore?.value ? new Date(lastExecutionStore.value) : null;
-        
-        // Calculate if enough time has passed
-        if (lastExecution) {
-            const minutesSinceLastExecution = (now - lastExecution) / (1000 * 60);
-            if (minutesSinceLastExecution < executionInterval) {
-                // Not enough time has passed, skip this execution
-                return;
-            }
-        }
-        
-        // Update last execution time
-        await $.datastore.set({
-            key: 'lastExecutionTime',
-            value: now.toISOString()
-        });
+        const { sharedMailbox, folderId, subjectContains } = $.step.parameters;
 
         // Hole die verarbeiteten Mail-IDs aus dem Datastore
         const processedMailsStore = await $.datastore.get({
@@ -152,6 +112,7 @@ export default defineTrigger({
                         if (subjectContains && subjectContains.trim() !== '') {
                             const subject = mail.subject || '';
                             if (!subject.toLowerCase().includes(subjectContains.toLowerCase())) {
+                                console.log('Betreff nicht übereinstimmt', subject, subjectContains);
                                 continue; // E-Mail überspringen, wenn Betreff nicht übereinstimmt
                             }
                         }
@@ -211,6 +172,8 @@ export default defineTrigger({
                         if (newEmails.length >= maxTotalEmails) {
                             break;
                         }
+                    } else {
+                        console.log('Mail nicht verarbeitet', mail.id, processedIds.includes(mail.id));
                     }
                 }
             }

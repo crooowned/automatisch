@@ -43,7 +43,7 @@ export default defineTrigger({
             key: 'subjectContains',
             type: 'string',
             required: false,
-            description: 'Filtert E-Mails, deren Betreff den angegebenen Text enthält. Wenn leer gelassen, werden alle E-Mails verarbeitet.',
+            description: 'Filtert E-Mails, deren Betreff den angegebenen Text enthält (clientseitig). Wenn leer gelassen, werden alle E-Mails verarbeitet.',
             variables: true
         },
         {
@@ -107,29 +107,14 @@ export default defineTrigger({
             if (nextLink) {
                 currentUrl = nextLink;
             } else {
-                // Erstelle Filter-Array für die verschiedenen Bedingungen
-                let filterParts = [];
-                
-                // Füge Altersfilter hinzu, falls angegeben
-                if (ageFilterISO) {
-                    filterParts.push(`receivedDateTime ge ${ageFilterISO}`);
-                }
-                
-                // Füge Betreff-Filter hinzu, wenn angegeben
-                if (subjectContains && subjectContains.trim() !== '') {
-                    // Escape Anführungszeichen im Suchtext
-                    const escapedSubject = subjectContains.replace(/'/g, "''");
-                    filterParts.push(`contains(subject, '${escapedSubject}')`);
-                }
-                
                 const params = new URLSearchParams({
                     '$orderby': 'receivedDateTime desc',
                     '$top': maxEmailsPerRequest.toString(),
                 });
                 
-                // Nur Filter hinzufügen wenn welche vorhanden sind
-                if (filterParts.length > 0) {
-                    params.set('$filter', filterParts.join(' and '));
+                // Nur Age-Filter als Server-Filter, da contains() problematisch ist
+                if (ageFilterISO) {
+                    params.set('$filter', `receivedDateTime ge ${ageFilterISO}`);
                 }
                 
                 currentUrl = `${baseUrl}?${params.toString()}`;
@@ -149,6 +134,14 @@ export default defineTrigger({
                 for (const mail of response.data.value) {
                     // Überprüfe, ob mail und mail.id definiert sind
                     if (mail && mail.id && !processedIds.includes(mail.id)) {
+                        // Clientseitige Filterung nach Betreff (da contains() serverseitig problematisch ist)
+                        if (subjectContains && subjectContains.trim() !== '') {
+                            const subject = mail.subject || '';
+                            if (!subject.toLowerCase().includes(subjectContains.toLowerCase())) {
+                                continue; // E-Mail überspringen, wenn Betreff nicht übereinstimmt
+                            }
+                        }
+                        
                         newEmails.push(mail);
                         
                         // Fetch attachments if the email has any

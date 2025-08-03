@@ -135,6 +135,7 @@ export default defineTrigger({
                 currentUrl = `${baseUrl}?${params.toString()}`;
             }
 
+            console.log('currentUrl', currentUrl);
             const response = await $.http.get(currentUrl, {
                 headers: {
                     'Content-Type': 'application/json',

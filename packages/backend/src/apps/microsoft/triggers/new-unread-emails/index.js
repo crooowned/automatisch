@@ -47,23 +47,6 @@ export default defineTrigger({
             variables: true
         },
         {
-            label: 'Alter in Tagen',
-            key: 'ageInDays',
-            type: 'dropdown',
-            required: false,
-            description: 'Anzahl der Tage zurück, für die E-Mails abgerufen werden sollen. Wenn nicht angegeben, wird nicht nach Alter gefiltert.',
-            variables: true,
-            options: [
-                { label: '1 Tag', value: 1 },
-                { label: '2 Tage', value: 2 },
-                { label: '3 Tage', value: 3 },
-                { label: '4 Tage', value: 4 },
-                { label: '5 Tage', value: 5 },
-                { label: '6 Tage', value: 6 },
-                { label: '7 Tage', value: 7 }
-            ]
-        },
-        {
             label: 'Ausführungsintervall (Minuten)',
             key: 'executionInterval',
             type: 'dropdown',
@@ -83,7 +66,7 @@ export default defineTrigger({
     ],
 
     async run($) {
-        const { sharedMailbox, folderId, subjectContains, ageInDays, executionInterval = 5 } = $.step.parameters;
+        const { sharedMailbox, folderId, subjectContains, executionInterval = 5 } = $.step.parameters;
 
         // Self-throttling: Check if enough time has passed since last execution
         const lastExecutionStore = await $.datastore.get({
@@ -114,14 +97,6 @@ export default defineTrigger({
         });
         const processedIds = processedMailsStore?.value || [];
 
-        // Berechne das Datum für den Altersfilter, falls angegeben
-        let ageFilterISO = null;
-        if (ageInDays && ageInDays > 0) {
-            const ageDate = new Date();
-            ageDate.setDate(ageDate.getDate() - ageInDays);
-            ageFilterISO = ageDate.toISOString();
-        }
-
         // Basis-URL für die API-Anfrage erstellen
         let baseUrl = 'https://graph.microsoft.com/v1.0';
         if (sharedMailbox) {
@@ -148,19 +123,9 @@ export default defineTrigger({
                 currentUrl = nextLink;
             } else {
                 // Basis-Filter für ungelesene E-Mails
-                let filter = 'isRead eq false';
+                const filter = 'isRead eq false';
                 
-                // Füge Altersfilter hinzu, falls angegeben
-                if (ageFilterISO) {
-                    filter += ` and receivedDateTime ge ${ageFilterISO}`;
-                }
-                
-                // Füge Betreff-Filter hinzu, wenn angegeben
-                if (subjectContains && subjectContains.trim() !== '') {
-                    // Escape Anführungszeichen im Suchtext
-                    const escapedSubject = subjectContains.replace(/'/g, "''");
-                    filter += ` and contains(subject, '${escapedSubject}')`;
-                }
+                // Betreff-Filter wird clientseitig angewendet, um API-Komplexität zu vermeiden
                 
                 const params = new URLSearchParams({
                     '$filter': filter,
@@ -183,6 +148,14 @@ export default defineTrigger({
                 for (const mail of response.data.value) {
                     // Überprüfe, ob mail und mail.id definiert sind
                     if (mail && mail.id && !processedIds.includes(mail.id)) {
+                        // Clientseitige Filterung nach Betreff
+                        if (subjectContains && subjectContains.trim() !== '') {
+                            const subject = mail.subject || '';
+                            if (!subject.toLowerCase().includes(subjectContains.toLowerCase())) {
+                                continue; // E-Mail überspringen, wenn Betreff nicht übereinstimmt
+                            }
+                        }
+                        
                         newEmails.push(mail);
                         
                         // Mail als gelesen markieren
